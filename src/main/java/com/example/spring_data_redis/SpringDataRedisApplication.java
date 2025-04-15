@@ -3,15 +3,13 @@ package com.example.spring_data_redis;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
-import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
-import org.springframework.data.redis.core.ReactiveRedisOperations;
-import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
-import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import org.springframework.web.reactive.function.server.RouterFunction;
-import org.springframework.web.reactive.function.server.RouterFunctions;
-import org.springframework.web.reactive.function.server.ServerResponse;
+import org.springframework.web.servlet.function.RouterFunction;
+import org.springframework.web.servlet.function.RouterFunctions;
+import org.springframework.web.servlet.function.ServerResponse;
 
 import java.util.UUID;
 
@@ -23,33 +21,29 @@ public class SpringDataRedisApplication {
 	}
 
 	@Bean
-	ReactiveRedisOperations<String, Coffee> redisOperations(ReactiveRedisConnectionFactory factory) {
-		Jackson2JsonRedisSerializer<Coffee> serializer = new Jackson2JsonRedisSerializer<>(Coffee.class);
-
-		RedisSerializationContext.RedisSerializationContextBuilder<String, Coffee> builder =
-				RedisSerializationContext.newSerializationContext(new StringRedisSerializer());
-
-		RedisSerializationContext<String, Coffee> context = builder.value(serializer).build();
-
-		return new ReactiveRedisTemplate<>(factory, context);
+	RedisTemplate<String, Coffee> redisTemplate(RedisConnectionFactory factory) {
+		RedisTemplate<String, Coffee> template = new RedisTemplate<>();
+		template.setConnectionFactory(factory);
+		template.setKeySerializer(new StringRedisSerializer());
+		template.setValueSerializer(new Jackson2JsonRedisSerializer<>(Coffee.class));
+		return template;
 	}
 
 	@Bean
-	RouterFunction<ServerResponse> routerFunction(ReactiveRedisOperations<String, Coffee> redisOperations) {
+	RouterFunction<ServerResponse> routerFunction(RedisTemplate<String, Coffee> redisTemplate) {
 		return RouterFunctions
 				.route()
 				.path("/coffee", builder -> builder
 						.POST("", request -> {
-							return request.bodyToMono(Coffee.class)
-									.map(coffee -> new Coffee(UUID.randomUUID().toString(), coffee.name()))
-										.flatMap(coffee -> redisOperations.opsForValue().set(coffee.id(), coffee))
-									.then(ServerResponse.ok().build());
+							var coffee = request.body(Coffee.class);
+							var newCoffee = new Coffee(UUID.randomUUID().toString(), coffee.name());
+							redisTemplate.opsForValue().set(UUID.randomUUID().toString(), newCoffee);
+							return ServerResponse.ok().build();
 						})
 						.GET("", request -> {
-							return redisOperations.keys("*")
-									.flatMap(redisOperations.opsForValue()::get)
-									.collectList()
-									.flatMap(coffees -> ServerResponse.ok().bodyValue(coffees));
+							//get all coffee
+							var coffeeList = redisTemplate.opsForValue().multiGet(redisTemplate.keys("*"));
+							return ServerResponse.ok().body(coffeeList);
 						})
 				)
 				.build();
